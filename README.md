@@ -3,7 +3,7 @@
 
 ## **EDBO+**. Bayesian reaction optimization as a tool for chemical synthesis
 
-WebApp: www.edbowebapp.com
+WebApp: https://www.edbowebapp.com
 
 **Reference:** Garrido Torres, Jose A.; Lau, Sii Hong; Anchuri, Pranay; Stevens, Jason M.; Tabora, Jose E.; Li, Jun; Borovika, Alina; Adams, Ryan P.; Doyle, Abigail G. "A Multi-Objective Active Learning Platform and Web App for Reaction Optimization" In preparation.
 
