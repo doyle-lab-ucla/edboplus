@@ -1,11 +1,7 @@
 
-# <img src="EDBOLogo.png" align="left" width="200">
+# <img src="EDBOLogo.png" width="190">
 
-<br>
-
-## **EDBO+**. <h2> Bayesian reaction optimization as a tool for chemical synthesis. </h2>
-
-<br><br><br><br>
+## **EDBO+**. Bayesian reaction optimization as a tool for chemical synthesis
 
 WebApp: www.edbowebapp.com
 
