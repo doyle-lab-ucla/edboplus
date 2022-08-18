@@ -5,7 +5,13 @@
 
 WebApp: https://www.edbowebapp.com
 
-**Reference:** Garrido Torres, Jose A.; Lau, Sii Hong; Anchuri, Pranay; Stevens, Jason M.; Tabora, Jose E.; Li, Jun; Borovika, Alina; Adams, Ryan P.; Doyle, Abigail G. "A Multi-Objective Active Learning Platform and Web App for Reaction Optimization" In preparation.
+**Reference:** Garrido Torres, Jose A.; Lau, Sii Hong; Anchuri, Pranay; Stevens, Jason M.; Tabora, Jose E.; Li, Jun; Borovika, Alina; Adams, Ryan P.; Doyle, Abigail G. "A Multi-Objective Active Learning Platform and Web App for Reaction Optimization".
+
+**DOI:** 10.26434/chemrxiv-2022-cljcp 
+
+**Links**:
+[ChemRxiv](https://chemrxiv.org/engage/chemrxiv/article-details/62f6966269f3a5df46b5584b).
+
 
 <br>
 
