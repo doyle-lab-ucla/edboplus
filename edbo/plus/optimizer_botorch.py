@@ -47,11 +47,9 @@ class EDBOplus:
         """
         Creates a reaction scope from a dictionary of components and values.
         """
-        start_gen_rxn_scope = time.perf_counter()
         df = create_reaction_scope(components=components, directory=directory,
                                    filename=filename,
                                    check_overwrite=check_overwrite)
-        print("Generating reaction scope; Time: {} sec".format(time.perf_counter() - start_gen_rxn_scope))
         return df
 
     @staticmethod
@@ -170,8 +168,6 @@ class EDBOplus:
 
         """
 
-        start_run = time.perf_counter()
-
         wdir = Path(directory)
         csv_filename = wdir.joinpath(filename)
         torch.manual_seed(seed=seed)
@@ -179,7 +175,6 @@ class EDBOplus:
         self.acquisition_sampler = acquisition_function_sampler
 
         # 1. Safe checks.
-        start_safe_checks = time.perf_counter()
         self.objective_names = objectives
         # Check whether the columns_features contains the objectives.
         if columns_features != 'all':
@@ -200,11 +195,7 @@ class EDBOplus:
         msg = "Scope was not found. Please create an scope (csv file)."
         assert os.path.exists(csv_filename), msg
 
-        end_safe_checks = time.perf_counter()
-        print("Safe checks; Time: {} sec".format(end_safe_checks - start_safe_checks))
-
         # 2. Load reaction.
-        start_load_rxn = time.perf_counter()
 
         df = pd.read_csv(f"{csv_filename}")
         df = df.dropna(axis='columns', how='all')
@@ -247,15 +238,10 @@ class EDBOplus:
             original_df.to_csv(csv_filename, index=False)
             return original_df
 
-        end_load_rxn = time.perf_counter()
-        print("Load Reaction; Time: {} sec".format(end_load_rxn - start_load_rxn))
 
         # 3. Separate train and test data.
 
-        start_separate_data = time.perf_counter()
-
         # 3.1. Auto-detect dummy features (one-hot-encoding).
-        start_dummy_features = time.perf_counter()
         numeric_cols = df._get_numeric_data().columns
         for nc in numeric_cols:
             df[nc] = pd.to_numeric(df[nc], downcast='float')
@@ -269,11 +255,8 @@ class EDBOplus:
 
         data = pd.get_dummies(df, prefix=ohe_columns, columns=ohe_columns, drop_first=True)
 
-        end_dummy_features = time.perf_counter()
-        print("  Dummy Features; Time: {} sec".format(end_dummy_features - start_dummy_features))
 
         # 3.2. Any sample with a value 'PENDING' in any objective is a test.
-        start_scope = time.perf_counter()
 
         # Calculating 'internal_df' takes 99.6% of the time for section 3.2
         # This is 40x slower than the new calculation of 'internal_df'
@@ -281,18 +264,14 @@ class EDBOplus:
         #     Old implementation: 4.231292907999887 sec
         #     New implementation: 0.12133147600070515 sec
         # internal_df = data.apply(lambda r: r.str.contains('PENDING', case=False).any(), axis=1)
-        start_internal_df = time.perf_counter()
         internal_df = data.apply(lambda r: 'PENDING' in r, axis=1, raw=True)
-        print("  internal_df; Time: {} sec".format(time.perf_counter() - start_internal_df))
         # Using data of shape (2085136, 6), 12,510,816 elements:
         #     Time: 11.925687787 sec (98.3x speedup from 0.1213314760 sec)
         #     Size: 12,510,816 elements (138.1x size increase from 90600)
         #     Speed of approximately 1.4 elements/sec
 
-        start_old_filtering = time.perf_counter()
         idx_test = (data[internal_df]).index.values
         idx_train = (data[~internal_df]).index.values
-        print("  Old Filtering; Time: {} sec".format(time.perf_counter() - start_old_filtering))
 
         # Data only contains featurized information (train and test).
         df_train_y = data.loc[idx_train][objectives]
@@ -310,12 +289,7 @@ class EDBOplus:
             print(msg)
             return original_df
         
-        end_scope = time.perf_counter()
-        print("  Scope?; Time: {} sec".format(end_scope - start_scope))
-
-
         # Run the BO process.
-        start_model_run = time.perf_counter()
         priority_list = self._model_run(
                 data=data,
                 df_train_x=df_train_x,
@@ -329,11 +303,7 @@ class EDBOplus:
                 scaler_y=scaler_objectives,
                 acquisition_function=acquisition_function
         )
-        end_model_run = time.perf_counter()
-        print("  Model Run; Time: {} sec".format(end_model_run - start_model_run))
 
-
-        start_attach_objectives = time.perf_counter()
         # Low priority to the samples that have been already collected.
         for i in range(0, len(idx_train)):
             priority_list[idx_train[i]] = -1
@@ -357,10 +327,6 @@ class EDBOplus:
                                    ])
         cols_for_preds = np.ravel(cols_for_preds)
 
-        end_attach_objectives = time.perf_counter()
-        print("  Attach Objectives; Time: {} sec".format(end_attach_objectives - start_attach_objectives))
-
-
         # Writing data of shape (2085136, 9), 18,766,224 elements and
         # (2085136, 6), 12,510,816 elements, for a total of 31,277,040
         # elements:
@@ -371,7 +337,6 @@ class EDBOplus:
         #     chunksize=1000000:  25.457136616999833 sec
         # If the shape (2085136, 9), 18,766,224 elements is not written:
         #     Not inplace:        11.118995329999962 sec
-        start_writing_csv = time.perf_counter()
         original_df = original_df.sort_values(cols_sort, ascending=False)
         # Save extra df containing predictions, uncertainties and EI.
         # original_df.to_csv(f"{directory}/pred_{filename}", index=False)
@@ -380,11 +345,6 @@ class EDBOplus:
         original_df = original_df.drop(columns=cols_for_preds, axis='columns')
         original_df = original_df.sort_values(cols_sort, ascending=False)
         original_df.to_csv(csv_filename, index=False)
-
-        end_separate_data = time.perf_counter()
-        print("  Writing CSV; Time: {} sec".format(end_separate_data - start_writing_csv))
-        print("Separate Data; Time: {} sec".format(end_separate_data - start_separate_data))
-        print("Total run(); Time: {} sec".format(end_separate_data - start_run))
 
         return original_df
 
