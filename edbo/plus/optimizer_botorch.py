@@ -192,7 +192,6 @@ class EDBOplus:
         assert os.path.exists(csv_filename), msg
 
         # 2. Load reaction.
-
         df = pd.read_csv(f"{csv_filename}")
         df = df.dropna(axis='columns', how='all')
         original_df = df.copy(deep=True)  # Make a copy of the original data.
@@ -234,7 +233,6 @@ class EDBOplus:
             original_df.to_csv(csv_filename, index=False)
             return original_df
 
-
         # 3. Separate train and test data.
 
         # 3.1. Auto-detect dummy features (one-hot-encoding).
@@ -250,7 +248,6 @@ class EDBOplus:
             ohe_features = True
 
         data = pd.get_dummies(df, prefix=ohe_columns, columns=ohe_columns, drop_first=True)
-
 
         # 3.2. Any sample with a value 'PENDING' in any objective is a test.
 
@@ -284,7 +281,7 @@ class EDBOplus:
                   'value and then press run.'
             print(msg)
             return original_df
-        
+
         # Run the BO process.
         priority_list = self._model_run(
                 data=data,
