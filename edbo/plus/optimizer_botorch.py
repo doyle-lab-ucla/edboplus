@@ -24,13 +24,9 @@ from pathlib import Path
 from botorch.sampling.samplers import SobolQMCNormalSampler, IIDNormalSampler
 from edbo.plus.utils import EDBOStandardScaler
 
-import time
-
-print("Device:", 'cuda' if torch.cuda.is_available() else 'cpu')
-
 tkwargs = {
     "dtype": torch.double,
-    "device": torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+    "device": torch.device("cpu"),
 }
 
 
