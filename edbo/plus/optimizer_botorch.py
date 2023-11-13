@@ -94,7 +94,8 @@ class EDBOplus:
             scaler_features=MinMaxScaler(),
             scaler_objectives=EDBOStandardScaler(),
             acquisition_function='EHVI',
-            acquisition_function_sampler='SobolQMCNormalSampler'):
+            acquisition_function_sampler='SobolQMCNormalSampler',
+            write_extra_data=True):
 
         """
         Parameters
@@ -332,7 +333,8 @@ class EDBOplus:
         #     Not inplace:        11.118995329999962 sec
         original_df = original_df.sort_values(cols_sort, ascending=False)
         # Save extra df containing predictions, uncertainties and EI.
-        # original_df.to_csv(f"{directory}/pred_{filename}", index=False)
+        if write_extra_data:
+            original_df.to_csv(f"{directory}/pred_{filename}", index=False)
 
         # Drop predictions, uncertainties and EI.
         original_df = original_df.drop(columns=cols_for_preds, axis='columns')
