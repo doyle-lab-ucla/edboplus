@@ -95,7 +95,7 @@ class EDBOplus:
             scaler_objectives=EDBOStandardScaler(),
             acquisition_function='EHVI',
             acquisition_function_sampler='SobolQMCNormalSampler',
-            write_extra_data=True):
+            write_extra_data=False):
 
         """
         Parameters
