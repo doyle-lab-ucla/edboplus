@@ -94,7 +94,8 @@ class EDBOplus:
             scaler_features=MinMaxScaler(),
             scaler_objectives=EDBOStandardScaler(),
             acquisition_function='EHVI',
-            acquisition_function_sampler='SobolQMCNormalSampler'):
+            acquisition_function_sampler='SobolQMCNormalSampler',
+            write_extra_data=True):
 
         """
         Parameters
@@ -250,8 +251,21 @@ class EDBOplus:
         data = pd.get_dummies(df, prefix=ohe_columns, columns=ohe_columns, drop_first=True)
 
         # 3.2. Any sample with a value 'PENDING' in any objective is a test.
-        idx_test = (data[data.apply(lambda r: r.str.contains('PENDING', case=False).any(), axis=1)]).index.values
-        idx_train = (data[~data.apply(lambda r: r.str.contains('PENDING', case=False).any(), axis=1)]).index.values
+
+        # Calculating 'internal_df' takes 99.6% of the time for section 3.2
+        # This is 40x slower than the new calculation of 'internal_df'
+        # Using data with the shape (22650, 4), the timings are as follows:
+        #     Old implementation: 4.231292907999887 sec
+        #     New implementation: 0.12133147600070515 sec
+        # internal_df = data.apply(lambda r: r.str.contains('PENDING', case=False).any(), axis=1)
+        internal_df = data.apply(lambda r: 'PENDING' in r, axis=1, raw=True)
+        # Using data of shape (2085136, 6), 12,510,816 elements:
+        #     Time: 11.925687787 sec (98.3x speedup from 0.1213314760 sec)
+        #     Size: 12,510,816 elements (138.1x size increase from 90600)
+        #     Speed of approximately 1.4 elements/sec
+
+        idx_test = (data[internal_df]).index.values
+        idx_train = (data[~internal_df]).index.values
 
         # Data only contains featurized information (train and test).
         df_train_y = data.loc[idx_train][objectives]
@@ -307,9 +321,21 @@ class EDBOplus:
                                    ])
         cols_for_preds = np.ravel(cols_for_preds)
 
+        # Writing data of shape (2085136, 9), 18,766,224 elements and
+        # (2085136, 6), 12,510,816 elements, for a total of 31,277,040
+        # elements:
+        #     Not inplace:        26.374841521999997 sec
+        #     inplace:            25.059074194999994 sec
+        #     chunksize=1000:     24.801981217000048 sec
+        #     chunksize=100000:   25.093697998000152 sec
+        #     chunksize=1000000:  25.457136616999833 sec
+        # If the shape (2085136, 9), 18,766,224 elements is not written:
+        #     Not inplace:        11.118995329999962 sec
         original_df = original_df.sort_values(cols_sort, ascending=False)
         # Save extra df containing predictions, uncertainties and EI.
-        original_df.to_csv(f"{directory}/pred_{filename}", index=False)
+        if write_extra_data:
+            original_df.to_csv(f"{directory}/pred_{filename}", index=False)
+
         # Drop predictions, uncertainties and EI.
         original_df = original_df.drop(columns=cols_for_preds, axis='columns')
         original_df = original_df.sort_values(cols_sort, ascending=False)
