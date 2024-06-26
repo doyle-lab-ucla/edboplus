@@ -58,7 +58,7 @@ class EDBOplus:
                   f" using One-Hot-Encoding: {ohe_columns}")
         # Encode OHE.
         df_sampling = pd.get_dummies(df, prefix=ohe_columns,
-                                     columns=ohe_columns, drop_first=True)
+                                     columns=ohe_columns, drop_first=True, dtype=np.float64)
 
         # Order df according to initial sampling method (random samples).
         idaes = None
