@@ -1,28 +1,29 @@
-# EDBO plus through only BOTorch functions.
-
-
-import torch
-import numpy as np
-import pandas as pd
-from scipy.stats import norm
 import os
-from botorch.models import SingleTaskGP, ModelListGP
-from ordered_set import OrderedSet
+from pathlib import Path
+import random
+import sys
+import warnings
 
-from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
-from scipy.spatial.distance import cdist
-from idaes.surrogate.pysmo.sampling import LatinHypercubeSampling, CVTSampling
-from .model import build_and_optimize_model
-from .scope_generator import create_reaction_scope
-from botorch.utils.multi_objective.box_decompositions import \
-    NondominatedPartitioning
-from botorch.optim import optimize_acqf_discrete
+from botorch.acquisition.monte_carlo import qExpectedImprovement
 from botorch.acquisition.multi_objective.monte_carlo import \
     qExpectedHypervolumeImprovement, qNoisyExpectedHypervolumeImprovement
-
-from pathlib import Path
+from botorch.models import SingleTaskGP, ModelListGP
+from botorch.optim import optimize_acqf_discrete
 from botorch.sampling.samplers import SobolQMCNormalSampler, IIDNormalSampler
+from botorch.utils.multi_objective.box_decompositions import \
+    NondominatedPartitioning
+from idaes.surrogate.pysmo.sampling import LatinHypercubeSampling, CVTSampling
+import numpy as np
+from ordered_set import OrderedSet
+import pandas as pd
+from scipy.stats import norm
+from sklearn.preprocessing import MinMaxScaler
+from scipy.spatial.distance import cdist
+import torch
+
 from edbo.plus.utils import EDBOStandardScaler
+from .model import build_and_optimize_model
+from .scope_generator import create_reaction_scope
 
 tkwargs = {
     "dtype": torch.double,
@@ -43,14 +44,18 @@ class EDBOplus:
         """
         Creates a reaction scope from a dictionary of components and values.
         """
-        df = create_reaction_scope(components=components, directory=directory,
+        print("Generating a reaction scope...")
+        df, n_combinations = create_reaction_scope(components=components, directory=directory,
                                    filename=filename,
                                    check_overwrite=check_overwrite)
+        print(f"The scope was generated and contains {n_combinations} possible reactions!")
         return df
 
     @staticmethod
     def _init_sampling(df, batch, sampling_method, seed):
 
+        np.random.seed(seed)
+        random.seed(seed)
         numeric_cols = df._get_numeric_data().columns
         ohe_columns = list(OrderedSet(df.columns) - OrderedSet(numeric_cols))
         if len(ohe_columns) > 0:
@@ -59,21 +64,40 @@ class EDBOplus:
         # Encode OHE.
         df_sampling = pd.get_dummies(df, prefix=ohe_columns,
                                      columns=ohe_columns, drop_first=True)
+        
+        class HiddenPrints:
+            def __enter__(self):
+                self._original_stdout = sys.stdout
+                sys.stdout = open(os.devnull, 'w')
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                sys.stdout.close()
+                sys.stdout = self._original_stdout
 
         # Order df according to initial sampling method (random samples).
-        idaes = None
-        if sampling_method == 'seed':
-            print(f"Using seeded random sampling (seed={seed}).")
-            samples = df_sampling.sample(n=batch, random_state=seed)
-        elif sampling_method.lower() == 'lhs':
-            idaes = LatinHypercubeSampling(df_sampling, batch, sampling_type="selection")
-        elif sampling_method.lower() == 'cvtsampling':
-            idaes = CVTSampling(df_sampling, batch, sampling_type="selection")
+        with HiddenPrints():
+            idaes = None
+            if sampling_method == 'random':
+                samples = df_sampling.sample(n=batch, random_state=seed)
+            elif sampling_method.lower() == 'lhs':
+                idaes = LatinHypercubeSampling(df_sampling, batch, sampling_type="selection")
+            elif sampling_method.lower() == 'cvt':
+                idaes = CVTSampling(df_sampling, batch, sampling_type="selection")
 
-        if idaes is not None:
-            samples = idaes.sample_points()
-
-        print(f"Creating a priority list using random sampling: {sampling_method}")
+            if idaes is not None:
+                samples = idaes.sample_points()
+            
+            # Sometimes the LHS or CVT sampling methods return less samples than requested. Add random samples in this case.
+            additional_samples = None
+            if len(samples) < batch:
+                additional_samples = df.sample(n=batch-len(samples), random_state=seed, replace=True)
+                additional_samples = additional_samples.reset_index(drop=True)
+            # Add the additional samples to the samples dataframe. If some of the additional_samples are already in samples, generate new ones until the batch size is reached.
+            extra_seed = 1
+            while len(samples) < batch:
+                samples = pd.concat([samples,additional_samples]).drop_duplicates(ignore_index=True)
+                additional_samples = df.sample(n=batch-len(samples), random_state=seed+extra_seed, replace=True)
+                extra_seed +=1
 
         # Get index of the best samples according to the random sampling method.
         df_sampling_matrix = df_sampling.to_numpy()
@@ -84,16 +108,20 @@ class EDBOplus:
             a = np.argmin(d_i)
             priority_list[a] = 1.
         df['priority'] = priority_list
+
+        print(f"Generated {len(samples)} initial samples using {sampling_method} sampling (seed = {seed}). Run finished!")
+
         return df
+    
 
     def run(self,
             objectives, objective_mode, objective_thresholds=None,
             directory='.', filename='reaction.csv',
             columns_features='all',
-            batch=5, init_sampling_method='cvtsampling', seed=0,
+            batch=5, init_sampling_method='cvt', seed=0,
             scaler_features=MinMaxScaler(),
             scaler_objectives=EDBOStandardScaler(),
-            acquisition_function='EHVI',
+            acquisition_function='NoisyEHVI',
             acquisition_function_sampler='SobolQMCNormalSampler'):
 
         """
@@ -140,9 +168,9 @@ class EDBOplus:
 
         init_sampling_method: string:
             Method for selecting the first samples in the scope (in absence)  Choices are:
-            - 'seed' : Random seed (as implemented in Pandas).
+            - 'random' : Random seed (as implemented in Pandas).
             - 'lhs' : LatinHypercube sampling.
-            - 'cvtsampling' : CVT sampling.
+            - 'cvt' : CVT sampling.
 
         scaler_features: sklearn class
             sklearn.preprocessing class for transforming the features.
@@ -188,7 +216,7 @@ class EDBOplus:
             objective_mode = [objective_mode]
 
         # Check that the user's scope exists.
-        msg = "Scope was not found. Please create an scope (csv file)."
+        msg = "Scope was not found. Please create a scope (csv file)."
         assert os.path.exists(csv_filename), msg
 
         # 2. Load reaction.
@@ -219,6 +247,7 @@ class EDBOplus:
 
         # No objectives columns in the scope? Then random initialization.
         if len(obj_in_df) == 0:
+            print("There are no experimental observations yet. Random samples will be drawn.")
             df = self._init_sampling(df=df, batch=batch, seed=seed,
                                      sampling_method=init_sampling_method)
             original_df['priority'] = df['priority']
@@ -232,6 +261,11 @@ class EDBOplus:
             original_df = original_df.loc[:,~original_df.columns.str.contains('^Unnamed')]
             original_df.to_csv(csv_filename, index=False)
             return original_df
+
+        if columns_features == 'all':  # replacing with actual list of all features for printout
+            columns_features = list(set(df.columns.tolist())- set(objectives) - set(['priority']))
+        print(f"This run will optimize for the following objectives: {objectives}")
+        print(f"The following features will be used: {columns_features}")
 
         # 3. Separate train and test data.
 
@@ -250,8 +284,8 @@ class EDBOplus:
         data = pd.get_dummies(df, prefix=ohe_columns, columns=ohe_columns, drop_first=True)
 
         # 3.2. Any sample with a value 'PENDING' in any objective is a test.
-        idx_test = (data[data.apply(lambda r: r.str.contains('PENDING', case=False).any(), axis=1)]).index.values
-        idx_train = (data[~data.apply(lambda r: r.str.contains('PENDING', case=False).any(), axis=1)]).index.values
+        idx_test = (data[data.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]).index.values
+        idx_train = (data[~data.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]).index.values
 
         # Data only contains featurized information (train and test).
         df_train_y = data.loc[idx_train][objectives]
@@ -315,6 +349,7 @@ class EDBOplus:
         original_df = original_df.sort_values(cols_sort, ascending=False)
         original_df.to_csv(csv_filename, index=False)
 
+        print("Run finished!")
         return original_df
 
     def _model_run(self, data, df_train_x,  df_test_x, df_train_y, batch,
@@ -328,7 +363,6 @@ class EDBOplus:
         # Check number of objectives.
         n_objectives = len(df_train_y.columns.values)
 
-        print(f"Using {acquisition_function} acquisition function.")
         scaler_x.fit(df_train_x.to_numpy())
         init_train = scaler_x.transform(df_train_x.to_numpy())
         test_xnp = scaler_x.transform(df_test_x.to_numpy())
@@ -341,6 +375,7 @@ class EDBOplus:
                 y[:, i] = -y[:, i]
         y = scaler_y.fit_transform(y)
 
+        print("Generating surrogate model...")
         for i in range(0, n_objectives):
             train_x = torch.tensor(init_train).to(**tkwargs).double()
             train_y = np.array(y)[:, i]
@@ -353,7 +388,7 @@ class EDBOplus:
                                    covar_module=gp.covar_module, likelihood=likelihood)
             individual_models.append(model_i)
 
-        bigmodel = ModelListGP(*individual_models)
+        print("Model generated!")
 
         # Reference point is the minimum seen so far.
         ref_mins = np.min(y, axis=0)
@@ -378,30 +413,37 @@ class EDBOplus:
 
         if len(data.values) > 100000:
             sobol_num_samples = 64
-        elif len(data.values) > 5000:
+        elif len(data.values) > 50000:
             sobol_num_samples = 128
         elif len(data.values) > 10000:
             sobol_num_samples = 256
         else:
             sobol_num_samples = 512
 
-        print(f'Number of QMC samples using {self.acquisition_sampler} sampler:', sobol_num_samples)
         y_torch = torch.tensor(y).to(**tkwargs).double()
 
         if self.acquisition_sampler == 'IIDNormalSampler':
-            sampler = IIDNormalSampler(num_samples=sobol_num_samples, collapse_batch_dims=False, seed=seed)
+            sampler = IIDNormalSampler(num_samples=sobol_num_samples, collapse_batch_dims=True, seed=seed)
         if self.acquisition_sampler == 'SobolQMCNormalSampler':
-            sampler = SobolQMCNormalSampler(num_samples=sobol_num_samples, collapse_batch_dims=False)
+            sampler = SobolQMCNormalSampler(num_samples=sobol_num_samples, collapse_batch_dims=True, seed=seed) 
 
-        if acquisition_function == 'EHVI':
+        print ("Optimizing acqusition function...")
+
+        surrogate_model = None
+
+        if acquisition_function.lower() == 'ehvi':
 
             partitioning = NondominatedPartitioning(
                 ref_point=ref_point,
                 Y=y_torch)
+            
+            surrogate_model = ModelListGP(*individual_models)
+            individual_models = []  # empty to reuduce memory
+            
             EHVI = qExpectedHypervolumeImprovement(
-                model=bigmodel, sampler=sampler,
+                model=surrogate_model, sampler=sampler,
                 ref_point=ref_point,  # use known reference point
-                partitioning=partitioning,
+                partitioning=partitioning
             )
 
             acq_result = optimize_acqf_discrete(
@@ -411,22 +453,37 @@ class EDBOplus:
                 unique=True
             )
 
-        if acquisition_function == 'noisyEHVI':
-            partitioning = NondominatedPartitioning(
-                ref_point=ref_point,
-                Y=torch.tensor(y)).double().to(**tkwargs)
-            nEHVI = qNoisyExpectedHypervolumeImprovement(
-                model=bigmodel, sampler=sampler,
-                ref_point=ref_point,  # use known reference point
-                partitioning=partitioning,
-                incremental_nehvi=True, X_baseline=train_x, prune_baseline=False,
-            )
-            acq_result = optimize_acqf_discrete(
-                acq_function=nEHVI,
-                choices=test_x,
-                q=batch,
-                unique=True
-            )
+
+        if acquisition_function.lower() == 'noisyehvi':
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                acq_fct = None
+                if n_objectives > 1:  # NOTE: NoisyEHVI fails in case of n_objectives = 1 --> added that it uses EI in this case
+                    surrogate_model = ModelListGP(*individual_models)
+                    train_x = torch.tensor(init_train).to(**tkwargs).double()
+                    acq_fct = qNoisyExpectedHypervolumeImprovement(
+                        model=surrogate_model, sampler=sampler,
+                        ref_point=ref_point,
+                        alpha = 0.0,
+                        incremental_nehvi=True, X_baseline=train_x, prune_baseline=True
+                    )
+                else:
+                    train_x = torch.tensor(init_train).to(**tkwargs).double()
+                    surrogate_model = individual_models[0]
+                    best_value = train_y.max()
+                    acq_fct = qExpectedImprovement(
+                        model = surrogate_model, 
+                        best_f = best_value,
+                        sampler = sampler,
+                        X_pending = train_x
+                    )
+
+                acq_result = optimize_acqf_discrete(
+                    acq_function=acq_fct,
+                    choices=test_x,
+                    q=batch,
+                    unique=True
+                )
 
         best_samples = scaler_x.inverse_transform(acq_result[0].detach().cpu().numpy())
 
@@ -450,7 +507,7 @@ class EDBOplus:
         for i in range(0, len(data.values), n_chunks):
             vals = data.values[i:i+n_chunks]
             data_tensor = torch.tensor(scaler_x.transform(vals)).double().to(**tkwargs)
-            preds = bigmodel.posterior(X=data_tensor)
+            preds = surrogate_model.posterior(X=data_tensor)
             self.predicted_mean[i:i+n_chunks] = scaler_y.inverse_transform(preds.mean.detach().cpu().numpy())
             self.predicted_variance[i:i+n_chunks] = scaler_y.inverse_transform_var(preds.variance.detach().cpu().numpy())
 
@@ -465,7 +522,7 @@ class EDBOplus:
                     maximizing=maximizing
                 )
 
-        print('Predictions obtained and expected improvement obtained.')
+        print('Predictions and expected improvement obtained.')
 
         # Flip predictions if needed.
         for i in range(0, len(objective_mode)):
@@ -517,3 +574,4 @@ class EDBOplus:
             expected_improvement[sigma == 0.0] = 0.0
 
         return expected_improvement
+

@@ -14,7 +14,6 @@ tkwargs = {
 def build_and_optimize_model(train_x, train_y):
     """ Builds model and optimizes it."""
 
-    print('Using hyperparameters optimized for continuous variables.')
     gp_options = {
         'ls_prior1': 2.0, 'ls_prior2': 0.2, 'ls_prior3': 5.0,
         'out_prior1': 5.0, 'out_prior2': 0.5, 'out_prior3': 8.0,
