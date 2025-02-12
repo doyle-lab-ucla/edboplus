@@ -21,7 +21,7 @@ from sklearn.preprocessing import MinMaxScaler
 from scipy.spatial.distance import cdist
 import torch
 
-from edbo.plus.utils import EDBOStandardScaler
+from .utils import EDBOStandardScaler
 from .model import build_and_optimize_model
 from .scope_generator import create_reaction_scope
 
