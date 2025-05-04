@@ -468,14 +468,12 @@ class EDBOplus:
                         incremental_nehvi=True, X_baseline=train_x, prune_baseline=True
                     )
                 else:
-                    train_x = torch.tensor(init_train).to(**tkwargs).double()
                     surrogate_model = individual_models[0]
-                    best_value = train_y.max()
+                    best_value = y_torch.max()
                     acq_fct = qExpectedImprovement(
                         model = surrogate_model, 
                         best_f = best_value,
-                        sampler = sampler,
-                        X_pending = train_x
+                        sampler = sampler
                     )
 
                 acq_result = optimize_acqf_discrete(
