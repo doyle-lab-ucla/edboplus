@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
    name='edbo',
-   packages=['edbo'], 
+   packages=find_packages(), 
    version='0.2.0',
    author='Jose A. Garrido Torres & Abigail Gutmann Doyle',
    author_email='josegarridotorres@me.com',
