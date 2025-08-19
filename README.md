@@ -31,7 +31,7 @@ WebApp: https://www.edbowebapp.com
 (1) Create anaconda environment:
 
 ```
-conda create --name edbo_env python=3.8
+conda create --name edbo_env python=3.9
 ```
 
 (2) Activate conda environment:
