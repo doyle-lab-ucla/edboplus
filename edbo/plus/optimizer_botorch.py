@@ -63,7 +63,7 @@ class EDBOplus:
                   f" using One-Hot-Encoding: {ohe_columns}")
         # Encode OHE.
         df_sampling = pd.get_dummies(df, prefix=ohe_columns,
-                                     columns=ohe_columns, drop_first=True)
+                                     columns=ohe_columns, drop_first=True, dtype=np.float64)
         
         class HiddenPrints:
             def __enter__(self):
@@ -281,7 +281,7 @@ class EDBOplus:
                   f" using One-Hot-Encoding: {ohe_columns}")
             ohe_features = True
 
-        data = pd.get_dummies(df, prefix=ohe_columns, columns=ohe_columns, drop_first=True)
+        data = pd.get_dummies(df, prefix=ohe_columns, columns=ohe_columns, drop_first=True, dtype=np.float64)
 
         # 3.2. Any sample with a value 'PENDING' in any objective is a test.
         idx_test = (data[data.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]).index.values
@@ -572,4 +572,3 @@ class EDBOplus:
             expected_improvement[sigma == 0.0] = 0.0
 
         return expected_improvement
-
