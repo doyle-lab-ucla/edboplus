@@ -556,7 +556,7 @@ class EDBOplus:
                 Boolean flag that indicates whether the loss function is to be maximised or minimised.
         """
 
-        sigma = variance * 2.
+        sigma = np.sqrt(variance)
 
         if maximizing:
             loss_optimum = np.max(train_y)
