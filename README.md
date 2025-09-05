@@ -52,6 +52,19 @@ pip install -e .
 
 <br>
 
+### Usage:
+
+(1) Open and edit config.json to choose your scope, your objectives, as well as other EDBO+ parameters. (more detail here)
+
+(2) Run the following command, replacing \[FILENAME\] with the name of your experimental results CSV.
+
+```
+python edboplus.py [FILENAME]
+```
+If you don't have experimental results yet, EDBO+ will choose some initial conditions (determined by BATCH_SIZE) for you to try. 
+
+
+
 #### **Note**: to run the notebook tutorials install JupyterLab
 
 ```

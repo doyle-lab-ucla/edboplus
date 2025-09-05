@@ -1,0 +1,48 @@
+Metadata-Version: 2.4
+Name: edbo
+Version: 0.2.0
+Summary: Bayesian reaction optimization as a tool for chemical synthesis.
+Home-page: https://github.com/doyle-lab-ucla/edboplus
+Author: Jose A. Garrido Torres & Abigail Gutmann Doyle
+Author-email: josegarridotorres@me.com
+License: MIT
+Keywords: Bayesian Optimization,Chemical Reaction Optimization
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: Topic :: Scientific/Engineering :: Chemistry
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+License-File: LICENSE
+Requires-Dist: botorch==0.5.0
+Requires-Dist: gpytorch==1.5.1
+Requires-Dist: idaes-pse==1.5.1
+Requires-Dist: ipykernel==6.5.1
+Requires-Dist: ipython==7.29.0
+Requires-Dist: ipywidgets==7.6.5
+Requires-Dist: Jinja2==3.0.3
+Requires-Dist: joypy==0.2.6
+Requires-Dist: lxml==4.6.4
+Requires-Dist: mordred==1.2.0
+Requires-Dist: numpy==1.21.5
+Requires-Dist: ordered-set==4.0.2
+Requires-Dist: pandas==1.3.4
+Requires-Dist: pareto==1.1.1.post3
+Requires-Dist: pymoo==0.5.0
+Requires-Dist: scikit-learn>=1.4
+Requires-Dist: scipy>=1.10.0
+Requires-Dist: seaborn
+Requires-Dist: matplotlib
+Requires-Dist: sympy==1.9
+Requires-Dist: torch==1.10.0
+Requires-Dist: tqdm
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: home-page
+Dynamic: keywords
+Dynamic: license
+Dynamic: license-file
+Dynamic: requires-dist
+Dynamic: summary

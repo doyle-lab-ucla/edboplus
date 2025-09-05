@@ -3,6 +3,7 @@ from pathlib import Path
 import random
 import sys
 import warnings
+import itertools
 
 from botorch.acquisition.monte_carlo import qExpectedImprovement
 from botorch.acquisition.multi_objective.monte_carlo import \
@@ -23,7 +24,6 @@ import torch
 
 from .utils import EDBOStandardScaler
 from .model import build_and_optimize_model
-from .scope_generator import create_reaction_scope
 
 tkwargs = {
     "dtype": torch.double,
@@ -35,21 +35,31 @@ class EDBOplus:
 
     def __init__(self):
 
+        self.objective_names = []
         self.predicted_mean = []
         self.predicted_variance = []
-
+        self.ei = []
+    
     @staticmethod
-    def generate_reaction_scope(components, directory='./', filename='reaction.csv',
-                                check_overwrite=True):
-        """
-        Creates a reaction scope from a dictionary of components and values.
-        """
-        print("Generating a reaction scope...")
-        df, n_combinations = create_reaction_scope(components=components, directory=directory,
-                                   filename=filename,
-                                   check_overwrite=check_overwrite)
-        print(f"The scope was generated and contains {n_combinations} possible reactions!")
-        return df
+    def scope_on_the_fly(components, already_done):
+        '''Generate a scope on the fly, automatically removing
+        experiments that were already completed.'''
+        keys = components.keys()
+        values = (components[key] for key in keys)
+        scope = [dict(zip(keys, combination)) for combination in
+                    itertools.product(*values)]
+        df_scope = pd.DataFrame(scope)
+        # No experiments have been done
+        features = set(df_scope.columns)
+        if already_done.empty:
+            return df_scope
+        else:
+            # Get features to drop
+            to_drop = [col for col in already_done.columns if col not in features]
+            temp = already_done.drop(columns = to_drop)
+            merged = df_scope.merge(temp.drop_duplicates(), how='left', indicator=True)
+            return merged[merged['_merge'] == 'left_only'].drop(columns=["_merge"])
+
 
     @staticmethod
     def _init_sampling(df, batch, sampling_method, seed):
@@ -61,11 +71,12 @@ class EDBOplus:
         if len(ohe_columns) > 0:
             print(f"The following columns are categorical and will be encoded"
                   f" using One-Hot-Encoding: {ohe_columns}")
-        # Encode OHE.
+        # OHE encoding categorical variables
         df_sampling = pd.get_dummies(df, prefix=ohe_columns,
                                      columns=ohe_columns, drop_first=True, dtype=np.float64)
         
         class HiddenPrints:
+            '''Suppresses idaes output to stdout'''
             def __enter__(self):
                 self._original_stdout = sys.stdout
                 sys.stdout = open(os.devnull, 'w')
@@ -101,263 +112,21 @@ class EDBOplus:
 
         # Get index of the best samples according to the random sampling method.
         df_sampling_matrix = df_sampling.to_numpy()
-        priority_list = np.zeros_like(df_sampling.index)
+        samples_drawn = []
 
         for sample in samples.to_numpy():
             d_i = cdist([sample], df_sampling_matrix, metric='cityblock')
-            a = np.argmin(d_i)
-            priority_list[a] = 1.
-        df['priority'] = priority_list
-
-        print(f"Generated {len(samples)} initial samples using {sampling_method} sampling (seed = {seed}). Run finished!")
-
-        return df
+            samples_drawn.append(np.argmin(d_i))
+            
+        print(f"Generated {len(samples)} initial samples using {sampling_method} sampling (seed = {seed})")
+        return samples_drawn
     
-
-    def run(self,
-            objectives, objective_mode, objective_thresholds=None,
-            directory='.', filename='reaction.csv',
-            columns_features='all',
-            batch=5, init_sampling_method='cvt', seed=0,
-            scaler_features=MinMaxScaler(),
-            scaler_objectives=EDBOStandardScaler(),
-            acquisition_function='NoisyEHVI',
-            acquisition_function_sampler='SobolQMCNormalSampler'):
-
-        """
-        Parameters
-        ----------
-        objectives: list
-            list of string containing the name for each objective.
-            Example:
-                objectives = ['yield', 'cost', 'impurity']
-
-        objective_mode: list
-            list to select whether the objective should be maximized or minimized.
-            Examples:
-                A) Example for single-objective optimization:
-                    objective_mode = ['max']
-                B) Example for multi-objective optimization:
-                    objective_mode = ['max', 'min', 'min']
-
-        objective_thresholds: list
-            List of worst case values for each objective.
-            Example:
-                objective_threshold = [50.0, 10.0, 10.0]
-
-        columns_features: list
-            List containing the names of the columns to be included in the regression model. By default set to
-            'all', which means the algorithm will automatically select all the columns that are not in
-            the *objectives* list.
-
-        batch: int
-            Number of experiments that you want to run in parallel. For instance *batch = 5* means that you
-            will run 5 experiments in each EDBO+ run. You can change this number at any stage of the optimization,
-            so don't worry if you change  your mind after creating or initializing the reaction scope.
-
-        get_predictions: boolean
-            If True it will print out a *csv file* with the predictions.
-            You can also access the *predicted_mean* and *predicted_variance* through the EDBOPlus class.
-
-        directory: string
-            name of the directory to save the results of the optimization.
-
-        filename: string
-            Name of the file to save a *csv* with the priority list. If *get_predictions=True* EDBO+ will automatically
-            save a second file including the predictions (*pred_filename.csv*).
-
-        init_sampling_method: string:
-            Method for selecting the first samples in the scope (in absence)  Choices are:
-            - 'random' : Random seed (as implemented in Pandas).
-            - 'lhs' : LatinHypercube sampling.
-            - 'cvt' : CVT sampling.
-
-        scaler_features: sklearn class
-            sklearn.preprocessing class for transforming the features.
-            Example:
-                sklearn.preprocessing.MinMaxScaler()
-
-        scaler_objectives: sklearn class
-            sklearn.preprocessing class for transforming the objective values.
-            Examples:
-                - sklearn.preprocessing.StandardScaler()
-            Default:
-                EDBOStandardScaler()
-
-        seed: int
-            Seed for the random initialization.
-
-        acquisition_function_sampler: string
-            Options are: 'SobolQMCNormalSampler' or 'IIDNormalSampler'.
-
-        """
-
-        wdir = Path(directory)
-        csv_filename = wdir.joinpath(filename)
-        torch.manual_seed(seed=seed)
-        np.random.seed(seed)
-        self.acquisition_sampler = acquisition_function_sampler
-
-        # 1. Safe checks.
-        self.objective_names = objectives
-        # Check whether the columns_features contains the objectives.
-        if columns_features != 'all':
-            for objective in objectives:
-                if objective in columns_features:
-                    columns_features.remove(objective)
-                if 'priority' in columns_features:
-                    columns_features.remove('priority')
-
-        # Check objectives is a list (even for single objective optimization).
-        ohe_features = False
-        if type(objectives) != list:
-            objectives = [objectives]
-        if type(objective_mode) != list:
-            objective_mode = [objective_mode]
-
-        # Check that the user's scope exists.
-        msg = "Scope was not found. Please create a scope (csv file)."
-        assert os.path.exists(csv_filename), msg
-
-        # 2. Load reaction.
-        df = pd.read_csv(f"{csv_filename}")
-        df = df.dropna(axis='columns', how='all')
-        original_df = df.copy(deep=True)  # Make a copy of the original data.
-
-        # 2.1. Initialize sampling (only in the first iteration).
-        obj_in_df = list(filter(lambda x: x in df.columns.values, objectives))
-
-        # TODO CHECK: Check whether new objective has been added – if not add PENDING.
-        for obj_i in self.objective_names:
-            if obj_i not in original_df.columns.values:
-                original_df[obj_i] = ['PENDING'] * len(original_df.values)
-
-        if columns_features != 'all':
-            if 'priority' in df.columns.values:
-                for obj_i in objectives:
-                    if obj_i not in df.columns.values:
-                        df[obj_i] = ['PENDING'] * len(df.values)
-
-                df = df[columns_features + objectives + ['priority']]
-            else:
-                if len(obj_in_df) == 0:
-                    df = df[columns_features]
-                else:
-                    df = df[columns_features + objectives]
-
-        # No objectives columns in the scope? Then random initialization.
-        if len(obj_in_df) == 0:
-            print("There are no experimental observations yet. Random samples will be drawn.")
-            df = self._init_sampling(df=df, batch=batch, seed=seed,
-                                     sampling_method=init_sampling_method)
-            original_df['priority'] = df['priority']
-            # Append objectives.
-            for objective in objectives:
-                if objective not in original_df.columns.values:
-                    original_df[objective] = ['PENDING'] * len(original_df)
-
-            # Sort values and save dataframe.
-            original_df = original_df.sort_values('priority', ascending=False)
-            original_df = original_df.loc[:,~original_df.columns.str.contains('^Unnamed')]
-            original_df.to_csv(csv_filename, index=False)
-            return original_df
-
-        if columns_features == 'all':  # replacing with actual list of all features for printout
-            columns_features = list(set(df.columns.tolist())- set(objectives) - set(['priority']))
-        print(f"This run will optimize for the following objectives: {objectives}")
-        print(f"The following features will be used: {columns_features}")
-
-        # 3. Separate train and test data.
-
-        # 3.1. Auto-detect dummy features (one-hot-encoding).
-        numeric_cols = df._get_numeric_data().columns
-        for nc in numeric_cols:
-            df[nc] = pd.to_numeric(df[nc], downcast='float')
-        ohe_columns = list(OrderedSet(df.columns) - OrderedSet(numeric_cols))
-        ohe_columns = list(OrderedSet(ohe_columns) - OrderedSet(objectives))
-
-        if len(ohe_columns) > 0:
-            print(f"The following columns are categorical and will be encoded"
-                  f" using One-Hot-Encoding: {ohe_columns}")
-            ohe_features = True
-
-        data = pd.get_dummies(df, prefix=ohe_columns, columns=ohe_columns, drop_first=True, dtype=np.float64)
-
-        # 3.2. Any sample with a value 'PENDING' in any objective is a test.
-        idx_test = (data[data.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]).index.values
-        idx_train = (data[~data.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]).index.values
-
-        # Data only contains featurized information (train and test).
-        df_train_y = data.loc[idx_train][objectives]
-        if 'priority' in data.columns.tolist():
-            data = data.drop(columns=objectives + ['priority'])
-        else:
-            data = data.drop(columns=objectives)
-        df_train_x = data.loc[idx_train]
-        df_test_x = data.loc[idx_test]
-
-        if len(df_train_x.values) == 0:
-            msg = 'The scope was already generated, please ' \
-                  'insert at least one experimental observation ' \
-                  'value and then press run.'
-            print(msg)
-            return original_df
-
-        # Run the BO process.
-        priority_list = self._model_run(
-                data=data,
-                df_train_x=df_train_x,
-                df_test_x=df_test_x,
-                df_train_y=df_train_y,
-                batch=batch,
-                objective_mode=objective_mode,
-                objective_thresholds=objective_thresholds,
-                seed=seed,
-                scaler_x=scaler_features,
-                scaler_y=scaler_objectives,
-                acquisition_function=acquisition_function
-        )
-
-        # Low priority to the samples that have been already collected.
-        for i in range(0, len(idx_train)):
-            priority_list[idx_train[i]] = -1
-
-        original_df['priority'] = priority_list
-
-        cols_sort = ['priority'] + original_df.columns.values.tolist()
-        # Attach objectives predictions and expected improvement.
-        cols_for_preds = []
-        for idx_obj in range(0, len(objectives)):
-            name = objectives[idx_obj]
-            mean = self.predicted_mean[:, idx_obj]
-            var = self.predicted_variance[:, idx_obj]
-            ei = self.ei[:, idx_obj]
-            original_df[f"{name}_predicted_mean"] = mean
-            original_df[f"{name}_predicted_variance"] = var
-            original_df[f"{name}_expected_improvement"] = ei
-            cols_for_preds.append([f"{name}_predicted_mean",
-                                   f"{name}_predicted_variance",
-                                   f"{name}_expected_improvement"
-                                   ])
-        cols_for_preds = np.ravel(cols_for_preds)
-
-        original_df = original_df.sort_values(cols_sort, ascending=False)
-        # Save extra df containing predictions, uncertainties and EI.
-        original_df.to_csv(f"{directory}/pred_{filename}", index=False)
-        # Drop predictions, uncertainties and EI.
-        original_df = original_df.drop(columns=cols_for_preds, axis='columns')
-        original_df = original_df.sort_values(cols_sort, ascending=False)
-        original_df.to_csv(csv_filename, index=False)
-
-        print("Run finished!")
-        return original_df
-
     def _model_run(self, data, df_train_x,  df_test_x, df_train_y, batch,
                    objective_mode, objective_thresholds, seed,
                    scaler_x, scaler_y, acquisition_function):
         """
         Runs the surrogate machine learning model.
-        Returns a priority list for a given scope (top priority to low priority).
+        Returns the indices of the experiments chosen by the optimiser.
         """
 
         # Check number of objectives.
@@ -475,7 +244,7 @@ class EDBOplus:
                         best_f = best_value,
                         sampler = sampler
                     )
-
+                
                 acq_result = optimize_acqf_discrete(
                     acq_function=acq_fct,
                     choices=test_x,
@@ -484,17 +253,11 @@ class EDBOplus:
                 )
 
         best_samples = scaler_x.inverse_transform(acq_result[0].detach().cpu().numpy())
-
         print('Acquisition function optimized.')
-
-        # Save rescaled predictions (only for first fantasy).
 
         # Get predictions in chunks.
         chunk_size = 1000
-        n_chunks = len(data.values) // chunk_size
-
-        if n_chunks == 0:
-            n_chunks = 1
+        n_chunks = (len(data.values) // chunk_size) + 1
 
         self.predicted_mean = np.zeros(shape=(len(data.values), n_objectives))
         self.predicted_variance = np.zeros(shape=(len(data.values), n_objectives))
@@ -529,16 +292,16 @@ class EDBOplus:
 
         # Rescale samples.
         all_samples = data.values
-
-        priority_list = [0] * len(data.values)
+        chosen_sample_indices = []
 
         # Find best samples in data.
+        # NOTE: Here, the best samples are in vector form. This iterates through the data and returns
+        # the index of the entry that possess minimum distance between the 'best samples' and the entry
         for sample in best_samples:
             d_i = cdist([sample], all_samples, metric='cityblock')
-            a = np.argmin(d_i)
-            priority_list[a] = 1.
+            chosen_sample_indices.append(np.argmin(d_i))
 
-        return priority_list
+        return chosen_sample_indices
 
     def expected_improvement(self, train_y, mean, variance,
                              maximizing=False):
@@ -556,7 +319,7 @@ class EDBOplus:
                 Boolean flag that indicates whether the loss function is to be maximised or minimised.
         """
 
-        sigma = variance * 2.
+        sigma = variance ** 0.5
 
         if maximizing:
             loss_optimum = np.max(train_y)
@@ -571,4 +334,228 @@ class EDBOplus:
             expected_improvement = scaling_factor * (mean - loss_optimum) * norm.cdf(Z) + sigma * norm.pdf(Z)
             expected_improvement[sigma == 0.0] = 0.0
 
-        return expected_improvement
+        return expected_improvement    
+
+    def run(self,
+            objectives, objective_mode, scope, objective_thresholds=None,
+            directory='.', filename='reaction.csv',
+            columns_features='all',
+            batch=5, init_sampling_method='cvt', seed=0,
+            scaler_features=MinMaxScaler(),
+            scaler_objectives=EDBOStandardScaler(),
+            acquisition_function='NoisyEHVI',
+            acquisition_function_sampler='SobolQMCNormalSampler'):
+
+        """
+        Parameters
+        ----------
+        objectives: list
+            list of string containing the name for each objective.
+            Example:
+                objectives = ['yield', 'cost', 'impurity']
+
+        objective_mode: list
+            list to select whether the objective should be maximized or minimized.
+            Examples:
+                A) Example for single-objective optimization:
+                    objective_mode = ['max']
+                B) Example for multi-objective optimization:
+                    objective_mode = ['max', 'min', 'min']
+        
+        scope: dictionary[string, list]
+            dictionary specifying the reaction scope, where each key corresponds to a reaction variable
+            (e.g. concentration, solvent type, catalyst type) and each value correspond to all possible
+            conditions you want to evaluate the acquisition function with. For instance, the corresponding
+            value to "concentration" could be [0.05, 0.1, 0.15, 0.2].
+
+        objective_thresholds: list
+            List of worst case values for each objective.
+            Example:
+                objective_threshold = [50.0, 10.0, 10.0]
+
+        columns_features: list
+            List containing the names of the columns to be included in the regression model. By default set to
+            'all', which means the algorithm will automatically select all the columns that are not in
+            the *objectives* list.
+
+        batch: int
+            Number of experiments that you want to run in parallel. For instance *batch = 5* means that you
+            will run 5 experiments in each EDBO+ run. You can change this number at any stage of the optimization,
+            so don't worry if you change  your mind after creating or initializing the reaction scope.
+
+        directory: string
+            name of the directory to save the results of the optimization.
+
+        filename: string
+            Name of the file to save a *csv* with the priority list. If *get_predictions=True* EDBO+ will automatically
+            save a second file including the predictions (*pred_filename.csv*).
+
+        init_sampling_method: string:
+            Method for selecting the first samples in the scope (in absence)  Choices are:
+            - 'random' : Random seed (as implemented in Pandas).
+            - 'lhs' : LatinHypercube sampling.
+            - 'cvt' : CVT sampling.
+
+        scaler_features: sklearn class
+            sklearn.preprocessing class for transforming the features.
+            Example:
+                sklearn.preprocessing.MinMaxScaler()
+
+        scaler_objectives: sklearn class
+            sklearn.preprocessing class for transforming the objective values.
+            Examples:
+                - sklearn.preprocessing.StandardScaler()
+            Default:
+                EDBOStandardScaler()
+
+        seed: int
+            Seed for the random initialization.
+
+        acquisition_function_sampler: string
+            Options are: 'SobolQMCNormalSampler' or 'IIDNormalSampler'.
+
+        """
+
+        wdir = Path(directory)
+        csv_filename = wdir.joinpath(filename)
+        torch.manual_seed(seed=seed)
+        np.random.seed(seed)
+        self.acquisition_sampler = acquisition_function_sampler
+
+        # 1. Safe checks.
+        self.objective_names = objectives
+
+        # Ensure that all column features are actually present in the scope. If not, then they will be removed
+        if columns_features != 'all':
+            scope_features = set(scope.keys())
+            columns_features = [feature for feature in columns_features if feature in scope_features]
+
+        # Check that each variable has a nonzero number of possible values trialed in the scope
+        if any(not value for value in scope.values()):
+            raise ValueError("Error, one of the reaction variables have no possible values! Please check config.json!")
+
+        # 2. Load training data, if it exists
+        try:
+            training_df = pd.read_csv(f"{csv_filename}")
+            training_df = training_df.dropna(axis='columns', how='all')
+            # Strip entries where a particular y value is 'PENDING' from the training dataframe 
+            for obj in objectives:
+                training_df = training_df[training_df[obj] != "PENDING"].copy()
+        except FileNotFoundError:
+            # Initialise empty dataframe 
+            training_df = pd.DataFrame({var: [] for var in scope.keys()})
+        
+        # 2.1 Check for the categorical (OHE) variables that the scope actually includes all possible
+        # values (e.g. solvents). Throws an error if this is not the case.
+        for var, values in scope.items():
+            if type(values[0]) != str:
+                continue
+            permissible_values = set(values)
+            values_in_df = set(training_df[var])
+            val_not_in_scope = [val for val in values_in_df if val not in permissible_values] 
+            if val_not_in_scope:
+                raise ValueError(f"""Unknown {var} type/s {tuple(val_not_in_scope)} detected in the training data! Please ensure 
+                the scope contains all possible values for all categorical variables!""") 
+
+        print("Generating reaction scope...")
+        test_df = EDBOplus.scope_on_the_fly(scope, training_df)
+        print(f"Scope generated! Total size (minus already completed experiments): {len(test_df)}")
+
+        # 2.2 No training (experimental) data yet, perform initial sampling and exit early
+        if training_df.empty:
+            print("There are no experimental observations yet. Random samples will be drawn.")
+            samples_drawn = self._init_sampling(df=test_df, batch=batch, seed=seed,
+                                     sampling_method=init_sampling_method)
+            samples = test_df.iloc[samples_drawn].copy()
+            # Append objectives.
+            for objective in objectives:
+                samples[objective] = ['PENDING'] * len(samples)
+            # Write initial samples to (empty) destination file
+            samples.to_csv(csv_filename, index=False)
+            print(f"Initial samples written to {filename}!")
+            return 
+
+        # 2.3 Display features considered by model, then strip training and test dataframes of extraneous features/columns
+        if columns_features == 'all':  
+            feature_list = test_df.columns.to_list()
+        else: 
+            feature_list = columns_features
+        print(f"This run will optimize for the following objectives: {objectives}")
+        print(f"The following features will be used: {feature_list}")
+
+        trialed_columns = set(feature_list + objectives)
+        test_df = test_df[[col for col in test_df.columns if col in trialed_columns]]
+        training_df = training_df[[col for col in training_df.columns if col in trialed_columns]]
+
+        # 3. Auto-detect categorical variables and insert dummy features (one-hot-encoding).
+        numeric_cols = test_df._get_numeric_data().columns
+        for nc in numeric_cols:
+            test_df[nc] = pd.to_numeric(test_df[nc], downcast='float')
+        ohe_columns = list(OrderedSet(test_df.columns) - OrderedSet(numeric_cols))
+        ohe_columns = list(OrderedSet(ohe_columns) - OrderedSet(objectives))
+
+        if len(ohe_columns) > 0:
+            print(f"The following columns are categorical and will be encoded"
+                  f" using One-Hot-Encoding: {ohe_columns}")
+
+        df_train = pd.get_dummies(training_df, prefix=ohe_columns, columns=ohe_columns, drop_first=True, dtype=np.float64)
+        # Separates predictive and response variables in training set
+        df_train_y = df_train.loc[:,objectives]
+        df_train_x = df_train.drop(columns=objectives)
+        df_test_x = pd.get_dummies(test_df, prefix=ohe_columns, columns=ohe_columns, drop_first=True, dtype=np.float64)
+        data = df_test_x.copy(deep=True)
+
+        # 4. Run the BO model and get indices of new experiments to try
+        samples_chosen = self._model_run(
+                data=data,
+                df_train_x=df_train_x,
+                df_test_x=df_test_x,
+                df_train_y=df_train_y,
+                batch=batch,
+                objective_mode=objective_mode,
+                objective_thresholds=objective_thresholds,
+                seed=seed,
+                scaler_x=scaler_features,
+                scaler_y=scaler_objectives,
+                acquisition_function=acquisition_function
+        )
+
+        # 5. Attach objectives predictions and expected improvement.
+        tests_with_predictions = test_df.copy(deep=True)
+        cols_for_preds = []
+        for idx_obj in range(0, len(objectives)):
+            name = objectives[idx_obj]
+            mean = self.predicted_mean[:, idx_obj]
+            var = self.predicted_variance[:, idx_obj]
+            ei = self.ei[:, idx_obj]
+            tests_with_predictions[f"{name}_predicted_mean"] = mean
+            tests_with_predictions[f"{name}_predicted_variance"] = var
+            tests_with_predictions[f"{name}_expected_improvement"] = ei
+            cols_for_preds.append([f"{name}_predicted_mean",
+                                   f"{name}_predicted_variance",
+                                   f"{name}_expected_improvement"
+                                   ])
+        cols_for_preds = np.ravel(cols_for_preds)
+
+        # 6. Retrieve suggested samples
+        suggested = test_df.iloc[samples_chosen].copy()
+        suggested_with_predictions = tests_with_predictions.iloc[samples_chosen]
+        
+        # 7. Write prediction results over entire scope to a separate CSV and display suggested samples with predictions
+        exp_improvements = [col for col in test_df.columns if col.endswith("expected_improvement")]
+        tests_with_predictions = tests_with_predictions.sort_values(exp_improvements, ascending=False)
+        tests_with_predictions.to_csv(f"{directory}/pred_{filename}", index=False)
+        print(f"Prediction results written to {directory}/pred_{filename}!")
+        print("Run finished! Here are the suggested experiments (with predictions)")
+        print(suggested_with_predictions)
+
+        # 8. Append suggested samples to file (optional)
+        cmd = str(input("Would you like to append the suggested experiments to the data file? (y/n): "))
+        if cmd.strip().lower().startswith("y"):
+            # Fill in objectives with 'PENDING'
+            for obj in objectives:
+                suggested[obj] = ['PENDING'] * len(suggested)
+            combined = pd.concat([suggested, training_df]).round(4)
+            combined.to_csv(csv_filename, index=False)
+            print(f"File {csv_filename} updated with suggested experiments!")
+    

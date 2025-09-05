@@ -1,0 +1,10 @@
+LICENSE
+README.md
+pyproject.toml
+setup.cfg
+setup.py
+edbo.egg-info/PKG-INFO
+edbo.egg-info/SOURCES.txt
+edbo.egg-info/dependency_links.txt
+edbo.egg-info/requires.txt
+edbo.egg-info/top_level.txt

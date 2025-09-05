@@ -1,0 +1,19 @@
+{
+    "SCOPE": {
+      "solvent": ["MeCN", "MeOH"],
+      "base_salt": ["Na", "K"],
+      "base_charge": ["CO3 (2-)", "CO3 (1-)"],
+      "iron_salt": ["Fe(NO3)3", "Fe(acac)3", "Fe(OAc)2"],
+      "concentration": [0.1, 0.05],
+      "iron_loading": [0.01, 0.025, 0.05, 0.2],
+      "base_loading": [0.05, 0.2, 1],
+      "pivoh_loading": [1, 4]
+    },
+    
+    "OBJECTIVES": {
+      "yield": "max"
+    },
+    "BATCH_SIZE" : 3,
+    "COLUMN_FEATURES": "all",
+    "INITIAL_SAMPLING_METHOD": "cvt"
+}
