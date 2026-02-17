@@ -156,7 +156,8 @@ class EDBOplus:
             so don't worry if you change  your mind after creating or initializing the reaction scope.
 
         get_predictions: boolean
-            If True it will print out a *csv file* with the predictions.
+            If True it will print out a *csv file* with the predictions 
+            (predicted mean, its standard deviation, expected improvement).
             You can also access the *predicted_mean* and *predicted_variance* through the EDBOPlus class.
 
         directory: string
@@ -331,12 +332,13 @@ class EDBOplus:
             name = objectives[idx_obj]
             mean = self.predicted_mean[:, idx_obj]
             var = self.predicted_variance[:, idx_obj]
+            std_dev = np.sqrt(var)
             ei = self.ei[:, idx_obj]
             original_df[f"{name}_predicted_mean"] = mean
-            original_df[f"{name}_predicted_variance"] = var
+            original_df[f"{name}_predicted_std_dev"] = std_dev
             original_df[f"{name}_expected_improvement"] = ei
             cols_for_preds.append([f"{name}_predicted_mean",
-                                   f"{name}_predicted_variance",
+                                   f"{name}_predicted_std_dev",
                                    f"{name}_expected_improvement"
                                    ])
         cols_for_preds = np.ravel(cols_for_preds)

@@ -32,4 +32,5 @@ class EDBOStandardScaler:
         return x * [self.std] + [self.mu]
 
     def inverse_transform_var(self, x):
-        return x * [self.std]
+        std = np.asarray(self.std)
+        return x * (std**2)
