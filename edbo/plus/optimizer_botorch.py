@@ -40,14 +40,34 @@ class EDBOplus:
 
     @staticmethod
     def generate_reaction_scope(components, directory='./', filename='reaction.csv',
-                                check_overwrite=True):
+                                check_overwrite=True, encodings=None):
         """
         Creates a reaction scope from a dictionary of components and values.
+
+        encodings (optional): dict
+            Maps a component name to a lookup table of numeric features,
+            replacing one-hot encoding with pre-computed descriptors (e.g. PCA).
+            Example:
+                encodings = {
+                    'solvent': {
+                        'file': 'DATA/Solvent_PC_clean.csv',  # path or DataFrame
+                        'key': 'Name',
+                        'features': ['PC1', 'PC2', 'PC3', 'PC4'],  # PC1-PC4 = 93.9% variance
+                    }
+                }
+            The label column (e.g. 'solvent') is kept in the CSV for readability.
+            Pass it to *exclude_columns* in EDBOplus.run() to exclude it from the model.
+
+            Solvent auto-detection: if every value in a component column matches
+            a name in the bundled data/Solvent_PC_clean.csv, PC1-PC4 encodings
+            are applied automatically — no encodings dict needed.  A message will
+            be printed listing which columns were auto-encoded.
         """
         print("Generating a reaction scope...")
         df, n_combinations = create_reaction_scope(components=components, directory=directory,
                                    filename=filename,
-                                   check_overwrite=check_overwrite)
+                                   check_overwrite=check_overwrite,
+                                   encodings=encodings)
         print(f"The scope was generated and contains {n_combinations} possible reactions!")
         return df
 
@@ -118,6 +138,7 @@ class EDBOplus:
             objectives, objective_mode, objective_thresholds=None,
             directory='.', filename='reaction.csv',
             columns_features='all',
+            exclude_columns=None,
             batch=5, init_sampling_method='cvt', seed=0,
             scaler_features=MinMaxScaler(),
             scaler_objectives=EDBOStandardScaler(),
@@ -149,6 +170,12 @@ class EDBOplus:
             List containing the names of the columns to be included in the regression model. By default set to
             'all', which means the algorithm will automatically select all the columns that are not in
             the *objectives* list.
+
+        exclude_columns: list
+            List of column names to exclude from the model (they are kept in the output CSV for
+            readability). Use this to exclude label columns whose numeric features were joined
+            via *encodings* in generate_reaction_scope (e.g. exclude_columns=['solvent'] when
+            PC1-PC5 are already in the CSV).
 
         batch: int
             Number of experiments that you want to run in parallel. For instance *batch = 5* means that you
@@ -224,6 +251,10 @@ class EDBOplus:
         df = pd.read_csv(f"{csv_filename}")
         df = df.dropna(axis='columns', how='all')
         original_df = df.copy(deep=True)  # Make a copy of the original data.
+
+        # Drop label-only columns from the working copy (kept in original_df for CSV output).
+        if exclude_columns:
+            df = df.drop(columns=[c for c in exclude_columns if c in df.columns])
 
         # 2.1. Initialize sampling (only in the first iteration).
         obj_in_df = list(filter(lambda x: x in df.columns.values, objectives))
