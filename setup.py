@@ -23,7 +23,7 @@ setup(
         'mordred==1.2.0',
         'numpy==1.21.5',
         'ordered-set==4.0.2',
-        'pandas==1.3.4',
+        'pandas',
         'pareto==1.1.1.post3',
         'pymoo==0.5.0',
         'scikit-learn>=1.4',
